@@ -1,0 +1,349 @@
+#!/usr/bin/env ruby
+
+# Copyright (C) 2024 Stephane FEUGA OSHIMA
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+#
+# Written by Stephane FEUGA OSHIMA < sfo [at] member.fsf.org >
+
+require 'fileutils'
+require 'mail'
+require 'net/imap'
+require 'optparse'
+require 'timeout'
+require 'yaml'
+
+VERSION = '0.0.1'
+
+app_name = File.basename(__FILE__, '.rb')
+HOME = ENV['HOME']
+
+# Parse command-line options
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: ./#{app_name} [options]"
+
+  opts.on('-c', '--config FILE', 'Path to YAML configuration file') { |value| options[:config_file] = value }
+  opts.on('-e', '--email EMAIL', 'Email address for IMAP login') { |value| options[:email] = value }
+  opts.on('-p', '--password PASSWORD', 'Password for IMAP login') { |value| options[:password] = value }
+  opts.on('-s', '--imap_server SERVER', 'IMAP server address') { |value| options[:imap_server] = value }
+  opts.on('-a', '--all', 'Backup all emails found') { |value| options[:all] = value }
+  opts.on('-o', '--output_dir PATH', "Path to save emails and attachments (default: #{HOME}/#{app_name}/)") do |value|
+    options[:output_dir] = value || "#{HOME}/#{app_name}/#{EMAIL}"
+  end
+  opts.on('-v', '--verbose', 'Display progress') { |value| options[:verbose] = value }
+  opts.on('--imap_port PORT', Integer, 'IMAP server port (default: 993)') { |value| options[:imap_port] = value || 993 }
+  opts.on('--debug', 'Display debug traces') { |value| options[:debug] = value }
+
+  opts.on('--version', 'Display this app version') do
+    puts "#{app_name} #{VERSION}"
+    exit
+  end
+
+  opts.on('-h', '--help', 'Prints this help') do
+    puts opts
+    exit
+  end
+end.parse!
+
+# Load options from YAML if a config file is provided
+if options[:config_file]
+  config_file = options[:config_file]
+  unless File.exist?(config_file)
+    puts "Error: Configuration file '#{config_file}' not found !"
+
+    exit 1
+  end
+
+  yaml_options = YAML.load_file(config_file)
+
+  # Merge YAML options with CLI options, prioritizing CLI
+  options = yaml_options.merge(options) { |_key, yaml_value, cli_value| cli_value || yaml_value }
+
+  # Convert all keys to symbols for consistency
+  options = options.transform_keys(&:to_sym)
+
+  options[:verbose] = true if options[:debug]
+end
+
+# Validate required options
+%i[email password imap_server].each do |key|
+  next unless options[key].nil?
+
+  puts "Error: Missing required option --#{key.to_s.tr('_', '-')}"
+
+  exit 1
+end
+
+# Assign parsed options to variables
+EMAIL = options[:email]
+PASSWORD = options[:password]
+
+IMAP_SERVER = options[:imap_server]
+IMAP_PORT = options[:imap_port] || 993
+
+OUTPUT_DIR = options[:output_dir] || "#{HOME}/#{app_name}/#{EMAIL}"
+ATTACHMENTS_DIR = "#{OUTPUT_DIR}/attachments/"
+
+def load_processed_uids(mailbox_name)
+  file_path = "#{OUTPUT_DIR}/.backup_metadata_#{mailbox_name}_uids.txt"
+  return [] unless File.exist?(file_path)
+
+  File.read(file_path).split("\n").map(&:to_i) # Convert UIDs to integers
+end
+
+def save_processed_uids(mailbox_name, uids, verbose)
+  file_path = "#{OUTPUT_DIR}/.backup_metadata_#{mailbox_name}_uids.txt"
+  # Write unique UIDs to file
+  File.write(file_path, uids.uniq.join("\n"))
+
+  return unless verbose
+
+  puts "\n\tAdded #{uids.length} uids to #{file_path}"
+end
+
+# Create directories if it doesn't exist
+FileUtils.mkdir_p(OUTPUT_DIR, mode: 0600)
+FileUtils.mkdir_p(ATTACHMENTS_DIR, mode: 0600)
+
+if options[:debug]
+  puts '⚠️Running in debug mode⚠️'
+  puts 'Configs:'
+  puts "\tEmail: #{EMAIL}"
+  puts "\tPassword: #{PASSWORD}"
+  puts "\tIMAP Server: #{IMAP_SERVER}"
+  puts "\tIMAP Port: #{IMAP_PORT}"
+  puts "\tOutput dir: #{OUTPUT_DIR}"
+  puts "\tAttachments dir: #{ATTACHMENTS_DIR}"
+end
+
+# Connect to the IMAP server
+begin
+  imap = Net::IMAP.new(IMAP_SERVER, IMAP_PORT, true)
+  puts "\nSuccessfully connected to #{IMAP_SERVER}" if options[:debug]
+rescue Socket::ResolutionError => e
+  if options[:debug]
+    puts "Error connecting to #{IMAP_SERVER}: #{e.message}"
+  else
+    puts "Error connecting to #{IMAP_SERVER}"
+  end
+
+  exit 1
+end
+
+begin
+  imap.login(EMAIL, PASSWORD)
+  puts "Successfully logged to #{EMAIL}"
+rescue Net::IMAP::NoResponseError => e
+  if options[:debug]
+    puts "Login failed to #{EMAIL}: #{e.message}"
+  else
+    puts "Login failed to #{EMAIL}"
+  end
+  exit
+end
+
+# List all available mailboxes
+mailboxes = imap.list('', '*')
+
+if options[:all]
+  response = 'all'
+else
+  puts "\nAvailable mailboxes:"
+  mailboxes.each_with_index { |mailbox, index| puts " #{index + 1}. #{mailbox.name}" }
+
+  # Ask the user whether to back up all mailboxes or select specific ones
+  puts "\nEnter 'all' to back up all mailboxes, or 'select' to choose specific mailboxes. Enter 'quit' to exit."
+  printf 'Which mailboxes do you want to back up? (All/select/quit) '
+  response = gets.chomp.strip.downcase
+end
+
+selected_mailboxes = []
+if ['all', 'a', ''].include?(response)
+  selected_mailboxes = mailboxes
+elsif %w[select s].include?(response)
+  printf "\nEnter the numbers of the mailboxes you want to back up, separated by commas (e.g., 1,3,5): "
+  input = gets.chomp
+
+  indices = input.split(',').map(&:strip).map(&:to_i)
+  # Validate selected indices
+  indices.each do |index|
+    if index.between?(1, mailboxes.size)
+      selected_mailboxes << mailboxes[index - 1]
+    else
+      puts "⚠️Invalid selection: #{index}. Skipping"
+    end
+  end
+else
+  imap.logout
+  imap.disconnect
+
+  puts 'Exiting.'
+
+  exit
+end
+
+puts "\nSelected mailboxes for backup:"
+selected_mailboxes.each { |mailbox| puts " - #{mailbox.name}" }
+
+printf "\nDo you want to proceed with backing up all the mailboxes? (Yes/no) "
+default_response = 'yes'
+begin
+  # Timeout block to handle countdown
+  response = Timeout.timeout(10) do
+    gets.chomp.strip.downcase
+  end
+rescue Timeout::Error
+  # Set the default response if user doesn't respond in time
+  response = default_response
+end
+
+valid_yes_responses = ['yes', 'y', '']
+unless valid_yes_responses.include?(response)
+  imap.logout
+  imap.disconnect
+
+  puts 'Backup operation canceled by the user'
+
+  exit
+end
+
+selected_mailboxes.each do |mailbox|
+  mailbox_name = mailbox.name
+  mailbox_sanitized_name = mailbox_name.gsub(%r{[/\\]}, '_') # Replace invalid characters for folder names
+  mailbox_dir = File.join(OUTPUT_DIR, mailbox_sanitized_name)
+  FileUtils.mkdir_p(mailbox_dir, mode: 0600)
+
+  # Select the mailbox
+  begin
+    imap.select(mailbox_name)
+  rescue Net::IMAP::NoResponseError => e
+    if options[:debug]
+      puts "Cannot access mailbox '#{mailbox_name}': #{e.message}"
+    else
+      puts "Cannot access mailbox '#{mailbox_name}'"
+    end
+
+    next
+  end
+
+  # Load already processed UIDs
+  processed_uids = load_processed_uids(mailbox_sanitized_name)
+
+  # Fetch all message UIDs in the mailbox
+  message_uids = imap.search(['ALL']).map(&:to_i)
+
+  # Filter UIDs to only include unprocessed ones
+  unprocessed_uids = message_uids - processed_uids
+
+  if options[:debug]
+    puts "\n Processing #{mailbox_name}:"
+    puts "\tProcessed UIDs: #{processed_uids}"
+    puts "\tUnProcessed UIDs: #{unprocessed_uids}"
+  end
+
+  if unprocessed_uids.empty?
+    puts "\tNo new email found in #{mailbox_name}"
+
+    next
+  else
+    printf "\nFound #{unprocessed_uids.size} emails in #{mailbox_name}: "
+
+    # Download each email and save it as an .eml file
+    unprocessed_uids.each_with_index do |message_uid, index|
+      # Fetch the flags of the message
+      flags = imap.fetch(message_uid, 'FLAGS')[0].attr['FLAGS']
+      is_unread = !flags.include?(:Seen)
+
+      # Fetch the raw email content
+      msg = imap.fetch(message_uid, 'RFC822')[0].attr['RFC822']
+
+      # Parse the email with the Mail gem
+      mail = Mail.read_from_string(msg)
+
+      # Generate a meaningful filename using subject, sender, and date
+      sender = mail.from ? mail.from.first.to_s.strip.gsub(%r{[/\\]}, '_') : 'no_sender' # Sanitize sender
+      date = mail.date ? mail.date.strftime('%Y-%m-%d') : 'no_date'
+
+      # Ensure the filename is not too long
+      filename = "#{date}_#{sender}_#{message_uid}.eml"
+
+      # Limit filename length to avoid filesystem issues (e.g., for very long subjects)
+      filename = filename[0, 255] if filename.length > 255
+
+      # Define the path to save the email
+      email_file = File.join(mailbox_dir, filename)
+
+      # Check if the email file already exists
+      if File.exist?(email_file)
+        if options[:verbose]
+          puts "\tSkipping existing email: '#{filename}'"
+        else
+          printf '-'
+        end
+
+        # Skip this email and move to the next
+        next
+      end
+      # Save the email to a file
+      File.write(email_file, msg)
+
+      if mail.attachments.any?
+        # Create a folder for the current message_id
+        attachment_dir = File.join(ATTACHMENTS_DIR, filename)
+        FileUtils.mkdir_p(attachment_dir, mode: 0600)
+
+        # Save each attachment
+        mail.attachments.each do |attachment|
+          filename = attachment.filename
+          filepath = File.join(attachment_dir, filename)
+
+          # Write the attachment to a file
+          File.open(filepath, 'wb') { |file| file.write(attachment.body.decoded) }
+          puts "\tSaved attachment: #{filename} to #{filepath}" if options[:verbose]
+        end
+      end
+
+      if options[:verbose]
+        puts "\tSaving email #{index + 1} in #{mailbox_name} to #{email_file}"
+      else
+        printf '.'
+      end
+
+      # Add the UID to the processed list
+      processed_uids << message_uid
+
+      # Apply flags to the email
+      imap.store(message_uid, '+FLAGS', flags)
+
+      # Mark the email as unread if it was originally unread
+      imap.store(message_uid, '-FLAGS', [:Seen]) if is_unread
+
+      puts "\t\tFlags: #{flags}" if options[:debug]
+    end
+  end
+
+  # Save the updated UID list
+  save_processed_uids(mailbox_sanitized_name, processed_uids, options[:verbose])
+end
+
+# Logout and disconnect
+imap.logout
+imap.disconnect
+
+puts "\n" unless options[:verbose]
+
+puts "\nEmail backup complete. All emails saved in #{OUTPUT_DIR}."
+puts "Attachment extraction complete. Files saved in #{ATTACHMENTS_DIR}." if options[:verbose]
