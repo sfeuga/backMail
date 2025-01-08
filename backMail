@@ -115,8 +115,8 @@ def save_processed_uids(mailbox_name, uids, verbose)
 end
 
 # Create directories if it doesn't exist
-FileUtils.mkdir_p(OUTPUT_DIR, mode: 0600)
-FileUtils.mkdir_p(ATTACHMENTS_DIR, mode: 0600)
+FileUtils.mkdir_p(OUTPUT_DIR)
+FileUtils.mkdir_p(ATTACHMENTS_DIR)
 
 if options[:debug]
   puts '⚠️Running in debug mode⚠️'
@@ -224,7 +224,7 @@ selected_mailboxes.each do |mailbox|
   mailbox_name = mailbox.name
   mailbox_sanitized_name = mailbox_name.gsub(%r{[/\\]}, '_') # Replace invalid characters for folder names
   mailbox_dir = File.join(OUTPUT_DIR, mailbox_sanitized_name)
-  FileUtils.mkdir_p(mailbox_dir, mode: 0600)
+  FileUtils.mkdir_p(mailbox_dir)
 
   # Select the mailbox
   begin
@@ -303,7 +303,7 @@ selected_mailboxes.each do |mailbox|
       if mail.attachments.any?
         # Create a folder for the current message_id
         attachment_dir = File.join(ATTACHMENTS_DIR, filename)
-        FileUtils.mkdir_p(attachment_dir, mode: 0600)
+        FileUtils.mkdir_p(attachment_dir)
 
         # Save each attachment
         mail.attachments.each do |attachment|
