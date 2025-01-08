@@ -294,6 +294,9 @@ selected_mailboxes.each do |mailbox|
           printf '-'
         end
 
+        # Add the UID to the processed list
+        processed_uids << message_uid
+
         # Skip this email and move to the next
         next
       end
