@@ -79,3 +79,10 @@ and in your `PATH`.
     - Task for `account_1.yaml`, every day at 5 pm: `echo "0 17 * * * backMail -c ~/.config/account_1.yaml" | crontab -`
     - Task for `account_2.yaml`, every day, every 5 minutes, with logs output into a file:
       `echo "*/5 * * * * backMail -c ~/another/random/path/account_2.yaml >> ~/.local/share/backMail_account_2.log 2>&1" | crontab -`
+
+## TODO
+
+- Add a toggle to disable save of attachments
+- Add shell completion (BASH, zsh, fish, powershell)
+- Add a man page
+- Add examples and documentation here 🤦‍♂️
