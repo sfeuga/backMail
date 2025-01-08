@@ -328,9 +328,6 @@ selected_mailboxes.each do |mailbox|
       # Add the UID to the processed list
       processed_uids << message_uid
 
-      # Apply flags to the email
-      imap.store(message_uid, '+FLAGS', flags)
-
       # Mark the email as unread if it was originally unread
       imap.store(message_uid, '-FLAGS', [:Seen]) if is_unread
 
