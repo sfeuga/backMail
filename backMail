@@ -249,13 +249,13 @@ selected_mailboxes.each do |mailbox|
   unprocessed_uids = message_uids - processed_uids
 
   if options[:debug]
-    puts "\n Processing #{mailbox_name}:"
+    puts "\nProcessing #{mailbox_name}:"
     puts "\tProcessed UIDs: #{processed_uids}"
     puts "\tUnProcessed UIDs: #{unprocessed_uids}"
   end
 
   if unprocessed_uids.empty?
-    puts "\tNo new email found in #{mailbox_name}"
+    puts "No new email found in #{mailbox_name}"
 
     next
   else
