@@ -8,26 +8,26 @@ GEM
       net-pop
       net-smtp
     mini_mime (1.1.5)
-    net-imap (0.5.4)
+    net-imap (0.5.10)
       date
       net-protocol
     net-pop (0.1.2)
       net-protocol
     net-protocol (0.2.2)
       timeout
-    net-smtp (0.5.0)
+    net-smtp (0.5.1)
       net-protocol
     timeout (0.4.3)
 
 PLATFORMS
-  arm64-darwin-23
+  arm64-darwin-24
   ruby
 
 DEPENDENCIES
   mail
 
 RUBY VERSION
-   ruby 3.3.0p0
+   ruby 3.4.5p51
 
 BUNDLED WITH
-   2.5.3
+   2.7.2

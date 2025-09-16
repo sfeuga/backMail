@@ -4,7 +4,7 @@ A simple Mail backup solution
 
 ## Requirements
 
-- Ruby 3.3.0+
+- Ruby 3.4.5+
 - any shell and terminal
 - an email account to back up accessible via IMAP (+SSL)
 
