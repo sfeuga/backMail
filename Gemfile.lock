@@ -1,14 +1,14 @@
 GEM
   remote: https://rubygems.org/
   specs:
-    date (3.4.1)
+    date (3.5.1)
     mail (2.8.1)
       mini_mime (>= 0.1.1)
       net-imap
       net-pop
       net-smtp
     mini_mime (1.1.5)
-    net-imap (0.5.10)
+    net-imap (0.5.14)
       date
       net-protocol
     net-pop (0.1.2)
@@ -17,7 +17,7 @@ GEM
       timeout
     net-smtp (0.5.1)
       net-protocol
-    timeout (0.4.3)
+    timeout (0.6.1)
 
 PLATFORMS
   arm64-darwin-24
